@@ -33,6 +33,7 @@ vi.mock('../../api/analysis', async () => {
     ...actual,
     analysisApi: {
       analyzeAsync: vi.fn(),
+      triggerMarketReview: vi.fn(),
     },
   };
 });
@@ -155,6 +156,33 @@ describe('HomePage', () => {
       expect(screen.getByText(/股票 600519 正在分析中/)).toBeInTheDocument();
     });
     expect(screen.getByText(/股票 600519 正在分析中/).closest('[role="alert"]')).toBeInTheDocument();
+  });
+
+  it('submits market review from the home toolbar', async () => {
+    vi.mocked(historyApi.getList).mockResolvedValue({
+      total: 0,
+      page: 1,
+      limit: 20,
+      items: [],
+    });
+    vi.mocked(analysisApi.triggerMarketReview).mockResolvedValue({
+      status: 'accepted',
+      sendNotification: true,
+      message: '大盘复盘任务已提交',
+    });
+
+    render(
+      <MemoryRouter>
+        <HomePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: '大盘复盘' }));
+
+    await waitFor(() => {
+      expect(analysisApi.triggerMarketReview).toHaveBeenCalledWith({ sendNotification: true });
+    });
+    expect(await screen.findByText('大盘复盘已提交')).toBeInTheDocument();
   });
 
   it('navigates to chat with report context when asking a follow-up question', async () => {

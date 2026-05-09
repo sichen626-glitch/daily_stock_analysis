@@ -20,10 +20,11 @@ import asyncio
 import json
 import logging
 import re
+import threading
 from datetime import datetime
 from typing import Optional, Union, Dict, Any
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from api.deps import get_config_dep
@@ -38,6 +39,8 @@ from api.v1.schemas.analysis import (
     TaskInfo,
     TaskListResponse,
     DuplicateTaskErrorResponse,
+    MarketReviewRequest,
+    MarketReviewAccepted,
 )
 from api.v1.schemas.common import ErrorResponse
 from api.v1.schemas.history import (
@@ -69,6 +72,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _SUPPORTED_FREE_TEXT_RE = re.compile(r"^[A-Za-z0-9.*\-+\u3400-\u9fff\s]+$")
+_market_review_lock = threading.Lock()
+_market_review_running = False
+
+
+def _run_market_review_background(send_notification: bool) -> None:
+    """Run market review after the API response has been accepted."""
+    global _market_review_running
+    try:
+        from src.core.market_review import run_market_review
+        from src.notification import NotificationService
+
+        notifier = NotificationService()
+        run_market_review(notifier, send_notification=send_notification)
+    except Exception as exc:
+        logger.error("大盘复盘后台任务失败: %s", exc, exc_info=True)
+    finally:
+        with _market_review_lock:
+            _market_review_running = False
 
 
 def _invalid_analysis_input_error() -> HTTPException:
@@ -390,6 +411,47 @@ def _handle_sync_analysis(
                 "message": f"分析过程发生错误: {str(e)}"
             }
         )
+
+
+# ============================================================
+# POST /market-review - 触发大盘复盘
+# ============================================================
+
+@router.post(
+    "/market-review",
+    response_model=MarketReviewAccepted,
+    status_code=202,
+    responses={
+        202: {"description": "大盘复盘任务已接受", "model": MarketReviewAccepted},
+        409: {"description": "大盘复盘正在执行", "model": ErrorResponse},
+        500: {"description": "提交失败", "model": ErrorResponse},
+    },
+    summary="触发大盘复盘",
+    description="提交一个后台大盘复盘任务，复用 CLI 的大盘复盘链路并保存报告。",
+)
+def trigger_market_review(
+    request: MarketReviewRequest,
+    background_tasks: BackgroundTasks,
+) -> MarketReviewAccepted:
+    """Trigger market review from Web/API without blocking the request."""
+    global _market_review_running
+    with _market_review_lock:
+        if _market_review_running:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "duplicate_market_review",
+                    "message": "大盘复盘正在执行中，请稍后再试",
+                },
+            )
+        _market_review_running = True
+
+    background_tasks.add_task(_run_market_review_background, request.send_notification)
+    return MarketReviewAccepted(
+        status="accepted",
+        message="大盘复盘任务已提交，完成后会保存报告并按配置推送通知",
+        send_notification=request.send_notification,
+    )
 
 
 # ============================================================

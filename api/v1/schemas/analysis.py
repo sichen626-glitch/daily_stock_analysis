@@ -87,6 +87,23 @@ class AnalyzeRequest(BaseModel):
         }
 
 
+class MarketReviewRequest(BaseModel):
+    """Market review trigger parameters."""
+
+    send_notification: bool = Field(
+        True,
+        description="是否在大盘复盘完成后发送推送通知",
+    )
+
+
+class MarketReviewAccepted(BaseModel):
+    """Market review background task accepted response."""
+
+    status: str = Field("accepted", description="提交状态")
+    message: str = Field(..., description="提示信息")
+    send_notification: bool = Field(..., description="是否发送通知")
+
+
 class AnalysisResultResponse(BaseModel):
     """分析结果响应模型"""
     

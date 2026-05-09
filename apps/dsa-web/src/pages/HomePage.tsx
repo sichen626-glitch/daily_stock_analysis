@@ -1,6 +1,8 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getParsedApiError, type ParsedApiError } from '../api/error';
+import { analysisApi } from '../api/analysis';
 import { ApiErrorAlert, ConfirmDialog, Button, EmptyState, InlineAlert } from '../components/common';
 import { DashboardStateBlock } from '../components/dashboard';
 import { StockAutocomplete } from '../components/StockAutocomplete';
@@ -10,10 +12,19 @@ import { TaskPanel } from '../components/tasks';
 import { useDashboardLifecycle, useHomeDashboardState } from '../hooks';
 import { getReportText, normalizeReportLanguage } from '../utils/reportLanguage';
 
+type MarketReviewNotice = {
+  variant: 'success' | 'warning' | 'danger';
+  title: string;
+  message: string;
+} | null;
+
 const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isSubmittingMarketReview, setIsSubmittingMarketReview] = useState(false);
+  const [marketReviewNotice, setMarketReviewNotice] = useState<MarketReviewNotice>(null);
+  const [marketReviewError, setMarketReviewError] = useState<ParsedApiError | null>(null);
 
   const {
     query,
@@ -113,6 +124,25 @@ const HomePage: React.FC = () => {
     });
   }, [selectedReport, submitAnalysis]);
 
+  const handleTriggerMarketReview = useCallback(async () => {
+    setIsSubmittingMarketReview(true);
+    setMarketReviewNotice(null);
+    setMarketReviewError(null);
+    try {
+      const result = await analysisApi.triggerMarketReview({ sendNotification: notify });
+      setMarketReviewNotice({
+        variant: 'success',
+        title: '大盘复盘已提交',
+        message: result.message,
+      });
+    } catch (err: unknown) {
+      setMarketReviewError(getParsedApiError(err));
+      setMarketReviewNotice(null);
+    } finally {
+      setIsSubmittingMarketReview(false);
+    }
+  }, [notify]);
+
   const handleDeleteSelectedHistory = useCallback(() => {
     void deleteSelectedHistory();
     setShowDeleteConfirm(false);
@@ -193,6 +223,17 @@ const HomePage: React.FC = () => {
               />
               推送通知
             </label>
+            <Button
+              type="button"
+              variant="home-action-report"
+              size="md"
+              isLoading={isSubmittingMarketReview}
+              loadingText="提交中"
+              onClick={() => void handleTriggerMarketReview()}
+              className="h-10 flex-shrink-0 whitespace-nowrap"
+            >
+              大盘复盘
+            </Button>
             <button
               type="button"
               onClick={() => handleSubmitAnalysis()}
@@ -232,6 +273,27 @@ const HomePage: React.FC = () => {
                 className="rounded-xl px-3 py-2 text-xs shadow-none"
               />
             ) : null}
+          </div>
+        ) : null}
+
+        {marketReviewNotice ? (
+          <div className="px-3 pb-2 md:px-4">
+            <InlineAlert
+              variant={marketReviewNotice.variant}
+              title={marketReviewNotice.title}
+              message={marketReviewNotice.message}
+              className="rounded-xl px-3 py-2 text-xs shadow-none"
+            />
+          </div>
+        ) : null}
+
+        {marketReviewError ? (
+          <div className="px-3 pb-2 md:px-4">
+            <ApiErrorAlert
+              error={marketReviewError}
+              className="mb-1"
+              onDismiss={() => setMarketReviewError(null)}
+            />
           </div>
         ) : null}
 

@@ -17,8 +17,10 @@ ensure_litellm_stub()
 
 try:
     from api.app import create_app
+    from api.v1.endpoints import analysis as analysis_endpoint_module
     from api.v1.endpoints.analysis import (
         trigger_analysis,
+        trigger_market_review,
         _handle_sync_analysis,
         _build_analysis_report,
         _load_sync_fundamental_sources,
@@ -26,7 +28,9 @@ try:
     )
 except Exception:  # pragma: no cover - optional dependency environments
     create_app = None
+    analysis_endpoint_module = None
     trigger_analysis = None
+    trigger_market_review = None
     _handle_sync_analysis = None
     _build_analysis_report = None
     _load_sync_fundamental_sources = None
@@ -39,6 +43,37 @@ from src.services.task_queue import AnalysisTaskQueue
 
 
 class AnalysisApiContractTestCase(unittest.TestCase):
+    def test_trigger_market_review_accepts_background_task(self) -> None:
+        if trigger_market_review is None or analysis_endpoint_module is None:
+            self.skipTest("analysis endpoint helpers unavailable in this environment")
+
+        background_tasks = MagicMock()
+        request = SimpleNamespace(send_notification=False)
+
+        with patch.object(analysis_endpoint_module, "_market_review_running", False):
+            response = trigger_market_review(request=request, background_tasks=background_tasks)
+
+        self.assertEqual(response.status, "accepted")
+        self.assertFalse(response.send_notification)
+        background_tasks.add_task.assert_called_once_with(
+            analysis_endpoint_module._run_market_review_background,
+            False,
+        )
+
+    def test_trigger_market_review_rejects_duplicate_submission(self) -> None:
+        if trigger_market_review is None or analysis_endpoint_module is None:
+            self.skipTest("analysis endpoint helpers unavailable in this environment")
+
+        background_tasks = MagicMock()
+        request = SimpleNamespace(send_notification=True)
+
+        with patch.object(analysis_endpoint_module, "_market_review_running", True):
+            with self.assertRaises(Exception) as ctx:
+                trigger_market_review(request=request, background_tasks=background_tasks)
+
+        self.assertEqual(getattr(ctx.exception, "status_code", None), 409)
+        background_tasks.add_task.assert_not_called()
+
     def test_get_analysis_status_completed_db_snapshot_preserves_zero_change_pct(self) -> None:
         if get_analysis_status is None:
             self.skipTest("analysis endpoint helpers unavailable in this environment")

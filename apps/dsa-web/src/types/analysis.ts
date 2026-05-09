@@ -17,6 +17,16 @@ export interface AnalysisRequest {
   notify?: boolean;
 }
 
+export interface MarketReviewRequest {
+  sendNotification?: boolean;
+}
+
+export interface MarketReviewAccepted {
+  status: 'accepted';
+  message: string;
+  sendNotification: boolean;
+}
+
 // ============ Report Types ============
 
 export type ReportLanguage = 'zh' | 'en';
