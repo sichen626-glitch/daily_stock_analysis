@@ -34,6 +34,8 @@ const DESKTOP_UPDATE_BACKUP_MANIFEST_FILE = 'runtime-state.json';
 const DESKTOP_UPDATE_RUNTIME_RELATIVE_FILES = Object.freeze([
   '.env',
   path.join('data', 'stock_analysis.db'),
+  path.join('data', 'stock_analysis.db-wal'),
+  path.join('data', 'stock_analysis.db-shm'),
   path.join('logs', 'desktop.log'),
 ]);
 
@@ -882,22 +884,61 @@ function startBackend({ port, envFile, dbPath, logDir }) {
   };
 }
 
+function waitForBackendExit(processRef, timeoutMs = 5000) {
+  if (!processRef || processRef.exitCode !== null || processRef.signalCode) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+
+    const done = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      processRef.removeListener('exit', done);
+      resolve();
+    };
+
+    timer = setTimeout(() => {
+      done();
+    }, timeoutMs);
+
+    processRef.once('exit', done);
+  });
+}
+
+function __setBackendProcessForTest(processRef = null) {
+  backendProcess = processRef;
+}
+
 function stopBackend() {
   if (!backendProcess || backendProcess.killed) {
-    return;
+    return Promise.resolve();
   }
+  const processToStop = backendProcess;
 
   if (isWindows) {
-    spawn('taskkill', ['/PID', String(backendProcess.pid), '/T', '/F']);
-    return;
+    spawn('taskkill', ['/PID', String(processToStop.pid), '/T', '/F'], { windowsHide: true }).on('error', () => {
+    });
+    return waitForBackendExit(processToStop, 10000);
   }
 
-  backendProcess.kill('SIGTERM');
+  processToStop.kill('SIGTERM');
   setTimeout(() => {
-    if (!backendProcess.killed) {
-      backendProcess.kill('SIGKILL');
+    if (processToStop.killed || processToStop.exitCode !== null || processToStop.signalCode) {
+      return;
+    }
+    try {
+      processToStop.kill('SIGKILL');
+    } catch (_error) {
     }
   }, 3000);
+
+  return waitForBackendExit(processToStop, 10000);
 }
 
 function resolveDesktopVersion() {
@@ -1047,7 +1088,7 @@ async function installDownloadedUpdate() {
     message: '正在重启并安装更新...',
   });
   logLine('[update] stop backend and backup runtime data before install');
-  stopBackend();
+  await stopBackend();
   cleanupUpdateBackupRoot();
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -1461,14 +1502,14 @@ app.on('activate', () => {
 });
 
 app.on('window-all-closed', () => {
-  stopBackend();
+  void stopBackend();
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
 
 app.on('before-quit', () => {
-  stopBackend();
+  void stopBackend();
 });
 
 module.exports = {
@@ -1477,6 +1518,7 @@ module.exports = {
   GITHUB_REPO,
   LATEST_RELEASE_API_URL,
   RELEASES_PAGE_URL,
+  DESKTOP_UPDATE_RUNTIME_RELATIVE_FILES,
   UPDATE_MODE,
   UPDATE_STATUS,
   buildUpdateState,
@@ -1488,4 +1530,7 @@ module.exports = {
   normalizeVersionString,
   parseSemver,
   sanitizeReleaseUrl,
+  stopBackend,
+  __setBackendProcessForTest,
+  waitForBackendExit,
 };

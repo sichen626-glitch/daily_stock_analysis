@@ -57,7 +57,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-all.ps1
 3. PyInstaller 打包后端
 4. electron-builder 打包桌面应用
 
-当前 Windows 安装包使用 NSIS 向导式安装流程，仅支持当前用户安装且已禁用管理员提权，安装时可手动选择目标目录（例如非 C 盘）。安装器通过 NSIS `.onVerifyInstDir` 回调在安装器层面阻止选择 `Program Files`、`Windows` 等系统保护目录——选择这些路径时"下一步"按钮会被自动禁用。安装完成后，桌面端仍会按现有逻辑在安装目录旁生成/读取 `.env`、`data/stock_analysis.db` 和 `logs/desktop.log`。推荐使用默认的 per-user 安装目录。如果不想安装，仍可继续分发 `win-unpacked` 免安装包。
+当前 Windows 安装包使用 NSIS 向导式安装流程，仅支持当前用户安装且已禁用管理员提权，安装时可手动选择目标目录（例如非 C 盘）。安装器通过 NSIS `.onVerifyInstDir` 回调在安装器层面阻止选择 `Program Files`、`Windows` 等系统保护目录——选择这些路径时"下一步"按钮会被自动禁用。安装完成后，桌面端仍会按现有逻辑在安装目录旁生成/读取 `.env`、`data/stock_analysis.db`（含 `data/stock_analysis.db-wal` / `data/stock_analysis.db-shm`）和 `logs/desktop.log`。推荐使用默认的 per-user 安装目录。如果不想安装，仍可继续分发 `win-unpacked` 免安装包。
 
 ## GitHub CI 自动打包并发布 Release
 
@@ -135,16 +135,28 @@ echo \"- *.blockmap\"
 echo \"并确保 latest.yml 中 version 与 tag 的语义化版本一致\"
 ```
 
+5a. 建议在 PR 描述里记录的“可复核输出”（Windows）：
+
+```bash
+echo "release-tag=${RELEASE_TAG}"
+echo "latest.yml version:"
+grep -E "^version:" dist/latest.yml
+echo "latest.yml files:"
+sed -n '1,80p' dist/latest.yml
+echo "packaging artifacts:"
+ls -1 dist/*.yml dist/*.blockmap dist/*Setup*.exe dist/*installer*.exe 2>/dev/null | sort
+```
+
 5. Windows/NSIS 产物与发布附件一致性请在 Windows 环境手动验证（可人工触发发布流程），并在升级后核对运行时文件留存：
 
-   1. 安装前后分别记录安装目录中的 `.env`、`data/stock_analysis.db`、`logs/desktop.log` 的 SHA256；
+   1. 安装前后分别记录安装目录中的 `.env`、`data/stock_analysis.db`、`data/stock_analysis.db-wal`、`data/stock_analysis.db-shm`、`logs/desktop.log` 的 SHA256；
    2. 确认桌面端下一次启动后，上述文件仍存在且与安装前记录一致；
    3. 如不一致，可在应用退出后检查用户数据目录中的 `.dsa-desktop-update-backup` 是否清理完整，并结合最新日志串联排查。
 
 Windows 平台建议使用 PowerShell 执行：
 
 ```bash
-Get-FileHash .env,data\\stock_analysis.db,logs\\desktop.log -Algorithm SHA256
+Get-FileHash .env,data\\stock_analysis.db,data\\stock_analysis.db-wal,data\\stock_analysis.db-shm,logs\\desktop.log -Algorithm SHA256
 ```
 
 说明：应用已在 Windows NSIS 安装版的“重启安装”前备份安装目录旁上述运行时文件并尝试恢复，目的是降低更新过程中文件丢失风险；若恢复失败，桌面端会显示更新安装错误并保留手动下载路径供回退处理。
@@ -186,7 +198,7 @@ npm run build
 
 ## 目录结构
 
-Windows 安装包模式下，安装器仅支持当前用户安装且已禁用管理员提权，用户可在安装向导中选择安装目录；安装器会在安装器层面阻止选择 `Program Files`、`Windows` 等系统保护目录（选择时"下一步"按钮自动禁用），安装完成后，应用会在安装目录旁生成/读取 `.env`、`data/stock_analysis.db` 和 `logs/desktop.log`。请保留默认的 per-user 安装位置或选择其他用户可写目录。
+Windows 安装包模式下，安装器仅支持当前用户安装且已禁用管理员提权，用户可在安装向导中选择安装目录；安装器会在安装器层面阻止选择 `Program Files`、`Windows` 等系统保护目录（选择时"下一步"按钮自动禁用），安装完成后，应用会在安装目录旁生成/读取 `.env`、`data/stock_analysis.db`（含 `data/stock_analysis.db-wal` / `data/stock_analysis.db-shm`）和 `logs/desktop.log`。请保留默认的 per-user 安装位置或选择其他用户可写目录。
 
 `win-unpacked` 免安装模式下，目录结构如下：
 
@@ -195,7 +207,9 @@ win-unpacked/
   Daily Stock Analysis.exe    <- 双击启动
   .env                        <- 用户配置文件（首次启动自动生成）
   data/
-    stock_analysis.db         <- 数据库
+    stock_analysis.db         <- 数据库主文件
+    stock_analysis.db-wal     <- WAL 日志文件（更新备份/恢复）
+    stock_analysis.db-shm     <- WAL 共享元文件（更新备份/恢复）
   logs/
     desktop.log               <- 运行日志
   resources/

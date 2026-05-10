@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const Module = require('node:module');
 const { EventEmitter } = require('node:events');
+const path = require('node:path');
 
 function loadMainModule(t) {
   const originalLoad = Module._load;
@@ -207,4 +208,48 @@ test('fetchLatestReleaseJson rejects when response stream errors', async (t) => 
 
   await assert.rejects(pending, /stream failed/);
   assert.equal(destroyed, true);
+});
+
+test('desktop update backup list includes WAL and SHM artifacts', (t) => {
+  const mainModule = loadMainModule(t);
+  const files = mainModule.DESKTOP_UPDATE_RUNTIME_RELATIVE_FILES || [];
+  assert.equal(Array.isArray(files), true);
+  assert.ok(files.includes(path.join('data', 'stock_analysis.db')));
+  assert.ok(files.includes(path.join('data', 'stock_analysis.db-wal')));
+  assert.ok(files.includes(path.join('data', 'stock_analysis.db-shm')));
+  assert.ok(files.includes(path.join('logs', 'desktop.log')));
+});
+
+test('stopBackend waits for backend process exit', async (t) => {
+  const mainModule = loadMainModule(t);
+  const killSignals = [];
+  const fakeBackend = new EventEmitter();
+
+  fakeBackend.pid = 4321;
+  fakeBackend.killed = false;
+  fakeBackend.exitCode = null;
+  fakeBackend.signalCode = null;
+  fakeBackend.kill = (signal) => {
+    killSignals.push(signal);
+    fakeBackend.killed = true;
+    if (signal === 'SIGTERM' || signal === 'SIGKILL') {
+      process.nextTick(() => {
+        fakeBackend.exitCode = 0;
+        fakeBackend.emit('exit', 0, null);
+      });
+    }
+  };
+
+  mainModule.__setBackendProcessForTest(fakeBackend);
+
+  t.after(() => {
+    mainModule.__setBackendProcessForTest(null);
+  });
+
+  await Promise.race([
+    mainModule.stopBackend(),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('stopBackend did not resolve')), 200)),
+  ]);
+
+  assert.equal(killSignals.includes('SIGTERM'), true);
 });
