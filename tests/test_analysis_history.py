@@ -647,6 +647,46 @@ class AnalysisHistoryTestCase(unittest.TestCase):
 
         self.assertEqual(markdown, "# 🎯 大盘复盘\n\n## 今日大盘\n\n复盘正文")
 
+    def test_history_detail_returns_persisted_market_review_report(self) -> None:
+        """Market review detail should surface the saved recap content for Web history clicks."""
+        if get_history_detail is None:
+            self.skipTest("fastapi is not installed in this test environment")
+
+        report_content = "# 🎯 大盘复盘\n\n## 今日大盘\n\n复盘正文"
+        result = AnalysisResult(
+            code="MARKET",
+            name="大盘复盘",
+            sentiment_score=50,
+            trend_prediction="大盘复盘",
+            operation_advice="查看复盘",
+            analysis_summary="今日大盘复盘",
+            raw_response=report_content,
+        )
+
+        saved = self.db.save_analysis_history(
+            result=result,
+            query_id="market_review_query_detail_001",
+            report_type="market_review",
+            news_content="## 今日大盘\n\n复盘正文",
+            context_snapshot=None,
+            save_snapshot=False,
+        )
+        self.assertEqual(saved, 1)
+
+        with self.db.get_session() as session:
+            row = session.query(AnalysisHistory).filter(
+                AnalysisHistory.query_id == "market_review_query_detail_001"
+            ).first()
+            if row is None:
+                self.fail("未找到保存的历史记录")
+            record_id = row.id
+
+        report = get_history_detail(str(record_id), db_manager=self.db)
+
+        self.assertEqual(report.meta.report_type, "market_review")
+        self.assertEqual(report.summary.analysis_summary, report_content)
+        self.assertEqual(report.details.news_content, report_content)
+
     def test_history_detail_localizes_english_summary_fields(self) -> None:
         """History detail should localize summary enums for English reports."""
         if get_history_detail is None:
